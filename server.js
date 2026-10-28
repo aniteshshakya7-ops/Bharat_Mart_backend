@@ -104,7 +104,7 @@ app.post('/api/orders', authenticate, async (req, res) => {
         const phone = req.body.phone || req.body.mobile || "";
         const house_number = req.body.houseNumber || req.body.house_number || req.body.house || "";
         const full_address = req.body.fullAddress || req.body.full_address || req.body.address || "";
-        const pincode = req.body.pincode || req.body.pin_code || req.body.zip || "";
+        const pincode = req.body.pincode || req.body.pinCode || req.body.pin_code || req.body.zip || "";
         const payment = req.body.payment || "COD";
         const items = req.body.items || [];
         const date = req.body.date || new Date().toISOString();
@@ -121,6 +121,7 @@ app.post('/api/orders', authenticate, async (req, res) => {
                 let finalImg = p.image || (p.images && p.images.length ? p.images[0] : null) || p.photo || "";
                 item.image = finalImg;
                 item.photo = finalImg;
+                item.img = finalImg; // Super Mapper
             }
         }
         
@@ -147,13 +148,20 @@ app.get('/api/orders/my', authenticate, async (req, res) => {
         const enrichedOrders = (orders || []).map(o => {
             o.houseNumber = o.house_number || o.houseNumber || "";
             o.fullAddress = o.full_address || o.address || o.fullAddress || "";
-            o.pincode = o.pincode || o.pin_code || "";
+            
+            // Super Mapper for Pincode
+            const pin = o.pincode || o.pin_code || o.pinCode || "";
+            o.pincode = pin;
+            o.pinCode = pin;
+            o.zip = pin;
             
             let itemsArr = typeof o.items === 'string' ? JSON.parse(o.items) : (o.items || []);
             o.items = itemsArr.map(i => {
                 let pData = pMap[i.id] || { img: "", name: "Product" };
-                let fImg = i.photo || i.image || pData.img;
-                return { ...i, image: fImg, photo: fImg, name: i.name || pData.name };
+                let fImg = i.photo || i.image || i.img || pData.img;
+                
+                // Super Mapper for Photo
+                return { ...i, image: fImg, photo: fImg, img: fImg, imageUrl: fImg, name: i.name || pData.name };
             });
             return o;
         });
@@ -219,13 +227,20 @@ app.get('/api/admin/orders', authenticate, requireAdmin, async (req, res) => {
         const enrichedOrders = (orders || []).map(o => {
             o.houseNumber = o.house_number || o.houseNumber || "";
             o.fullAddress = o.full_address || o.address || o.fullAddress || "";
-            o.pincode = o.pincode || o.pin_code || "";
+            
+            // Super Mapper for Pincode
+            const pin = o.pincode || o.pin_code || o.pinCode || "";
+            o.pincode = pin;
+            o.pinCode = pin;
+            o.zip = pin;
             
             let itemsArr = typeof o.items === 'string' ? JSON.parse(o.items) : (o.items || []);
             o.items = itemsArr.map(i => {
                 let pData = pMap[i.id] || { img: "", name: "Product" };
-                let fImg = i.photo || i.image || pData.img;
-                return { ...i, image: fImg, photo: fImg, name: i.name || pData.name };
+                let fImg = i.photo || i.image || i.img || pData.img;
+                
+                // Super Mapper for Photo
+                return { ...i, image: fImg, photo: fImg, img: fImg, imageUrl: fImg, name: i.name || pData.name };
             });
             return o;
         });

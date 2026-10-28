@@ -43,14 +43,14 @@ app.post('/api/auth/login', async (req, res) => {
         
         if (!user) { 
             const { data: newUser, error: insErr } = await supabase.from('users').insert([{ username, password, role: 'customer' }]).select().single();
-            if (insErr) return res.status(400).json({ error: "Table Error: Supabase me schema.sql fir se run karein." });
+            if (insErr) return res.status(400).json({ error: "Table Error: schema check karein." });
             user = newUser;
         } else if (user.password !== password) {
             return res.status(401).json({ error: "Incorrect Password" });
         }
         
         const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
-        res.json({ token, user: { username: user.username, full_name: user.full_name, mobile: user.mobile, location: user.location, house_number: user.house_number, pincode: user.pincode, profile_photo: user.profile_photo } });
+        res.json({ token, user: { username: user.username, full_name: user.full_name, mobile: user.mobile } });
     } catch (error) { res.status(500).json({ error: "Server Error: " + error.message }); }
 });
 
@@ -63,6 +63,16 @@ app.post('/api/auth/admin-login', async (req, res) => {
         const token = jwt.sign({ id: admin.id, username: admin.username, role: admin.role }, JWT_SECRET, { expiresIn: '1d' });
         res.json({ token });
     } catch (error) { res.status(500).json({ error: "Server Error: " + error.message }); }
+});
+
+// --- COUPON ROUTE (New) ---
+app.post('/api/verify-coupon', async (req, res) => {
+    const { code } = req.body;
+    // Aap yahan apna coupon code aur discount set kar sakte hain
+    if (code && code.toUpperCase() === 'WELCOME50') {
+        return res.json({ success: true, discount: 50, type: 'fixed' });
+    }
+    res.status(400).json({ error: "Invalid Coupon Code" });
 });
 
 // --- PUBLIC STORE ROUTES ---
@@ -85,15 +95,6 @@ app.get('/api/products', async (req, res) => {
 });
 
 // --- CUSTOMER ROUTES ---
-app.put('/api/user/profile', authenticate, async (req, res) => {
-    try {
-        const { full_name, mobile, location, house_number, pincode, profile_photo } = req.body;
-        const { error } = await supabase.from('users').update({ full_name, mobile, location, house_number, pincode, profile_photo }).eq('username', req.user.username);
-        if (error) return res.status(400).json({ error: error.message });
-        res.json({ success: true });
-    } catch (error) { res.status(500).json({ error: error.message }); }
-});
-
 app.post('/api/orders', authenticate, async (req, res) => {
     try {
         const { phone, houseNumber, fullAddress, pincode, address, payment, items, date } = req.body;
@@ -106,8 +107,8 @@ app.post('/api/orders', authenticate, async (req, res) => {
         }
         
         let finalAmount = req.body.amount || req.body.totalAmount || req.body.total || calculatedTotal;
-
         const orderId = "#BM" + Math.floor(10000 + Math.random() * 90000);
+        
         const { error } = await supabase.from('orders').insert([{
             id: orderId, customer_username: req.user.username, phone, house_number: houseNumber, full_address: fullAddress, pincode, address, items, amount: finalAmount, payment, date
         }]);
@@ -124,29 +125,29 @@ app.get('/api/orders/my', authenticate, async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-app.patch('/api/orders/:id/cancel', authenticate, async (req, res) => {
-    try {
-        const { cancel_reason } = req.body;
-        const { error } = await supabase.from('orders').update({ status: 'Cancelled', cancel_reason }).eq('id', req.params.id).eq('customer_username', req.user.username);
-        if (error) return res.status(400).json({ error: error.message });
-        res.json({ success: true });
-    } catch (error) { res.status(500).json({ error: error.message }); }
-});
-
-app.post('/api/products/:id/reviews', authenticate, async (req, res) => {
-    try {
-        const { rating, text, images, image } = req.body;
-        const { data: p, error: selErr } = await supabase.from('products').select('reviews_data').eq('id', req.params.id).single();
-        if (selErr) return res.status(400).json({ error: selErr.message });
-        const newReview = { user: req.user.username, rating, text, images, image };
-        const reviews = p.reviews_data ? [...p.reviews_data, newReview] : [newReview];
-        const { error } = await supabase.from('products').update({ reviews_data: reviews }).eq('id', req.params.id);
-        if (error) return res.status(400).json({ error: error.message });
-        res.json({ success: true });
-    } catch (error) { res.status(500).json({ error: error.message }); }
-});
-
 // --- ADMIN ROUTES ---
+// Dashboard Stats (New)
+app.get('/api/admin/dashboard', authenticate, requireAdmin, async (req, res) => {
+    try {
+        const { data: orders } = await supabase.from('orders').select('*');
+        const { data: products } = await supabase.from('products').select('*');
+        let totalRevenue = 0;
+        let pending = 0;
+        if (orders) {
+            orders.forEach(o => {
+                if (o.status !== 'Cancelled') totalRevenue += Number(o.amount || 0);
+                if (o.status === 'Pending') pending++;
+            });
+        }
+        res.json({
+            totalOrders: orders ? orders.length : 0,
+            totalProducts: products ? products.length : 0,
+            revenue: totalRevenue,
+            pendingOrders: pending
+        });
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
 app.get('/api/admin/products', authenticate, requireAdmin, async (req, res) => {
     try {
         const { data, error } = await supabase.from('products').select('*').order('created_at', { ascending: false });
@@ -173,9 +174,7 @@ app.patch('/api/admin/orders/:id/status', authenticate, requireAdmin, async (req
 
 app.post('/api/admin/products', authenticate, requireAdmin, async (req, res) => {
     try {
-        if (!req.body.sku) {
-            req.body.sku = "PRD-" + Date.now();
-        }
+        if (!req.body.sku) req.body.sku = "PRD-" + Date.now();
         const { data, error } = await supabase.from('products').insert([req.body]).select();
         if (error) return res.status(400).json({ error: error.message });
         res.json(data[0]);
@@ -193,15 +192,6 @@ app.patch('/api/admin/products/:id', authenticate, requireAdmin, async (req, res
 app.delete('/api/admin/products/:id', authenticate, requireAdmin, async (req, res) => {
     try {
         const { error } = await supabase.from('products').delete().eq('id', req.params.id);
-        if (error) return res.status(400).json({ error: error.message });
-        res.json({ success: true });
-    } catch (error) { res.status(500).json({ error: error.message }); }
-});
-
-app.put('/api/admin/settings', authenticate, requireAdmin, async (req, res) => {
-    try {
-        const { key, value } = req.body;
-        const { error } = await supabase.from('store_settings').update({ value }).eq('key', key);
         if (error) return res.status(400).json({ error: error.message });
         res.json({ success: true });
     } catch (error) { res.status(500).json({ error: error.message }); }

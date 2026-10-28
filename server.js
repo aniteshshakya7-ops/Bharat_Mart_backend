@@ -46,7 +46,7 @@ app.post('/api/auth/login', async (req, res) => {
             return res.status(401).json({ error: "Incorrect Password" });
         }
         const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
-        res.json({ token, user: { username: user.username, full_name: user.full_name, mobile: user.mobile } });
+        res.json({ token, user: { username: user.username, full_name: user.full_name, mobile: user.mobile, location: user.location, house_number: user.house_number, pincode: user.pincode, profile_photo: user.profile_photo } });
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
@@ -62,11 +62,13 @@ app.post('/api/auth/admin-login', async (req, res) => {
 });
 
 // --- COUPON ROUTE ---
-app.post('/api/verify-coupon', async (req, res) => {
-    const { code } = req.body;
+const verifyCoupon = async (req, res) => {
+    const code = req.body.code || req.body.couponCode || req.body.coupon;
     if (code && code.toUpperCase() === 'WELCOME50') return res.json({ success: true, discount: 50, type: 'fixed' });
     res.status(400).json({ error: "Invalid Coupon Code" });
-});
+};
+app.post('/api/verify-coupon', verifyCoupon);
+app.post('/api/coupons/verify', verifyCoupon);
 
 // --- PUBLIC STORE ROUTES ---
 app.get('/api/settings', async (req, res) => {
@@ -88,22 +90,36 @@ app.get('/api/products', async (req, res) => {
 });
 
 // --- CUSTOMER ROUTES ---
+app.put('/api/user/profile', authenticate, async (req, res) => {
+    try {
+        const { full_name, mobile, location, house_number, pincode, profile_photo } = req.body;
+        const { error } = await supabase.from('users').update({ full_name, mobile, location, house_number, pincode, profile_photo }).eq('username', req.user.username);
+        if (error) return res.status(400).json({ error: error.message });
+        res.json({ success: true });
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
 app.post('/api/orders', authenticate, async (req, res) => {
     try {
-        const { phone, houseNumber, fullAddress, pincode, address, payment, items, date } = req.body;
+        // Smart mapping for all possible frontend names
+        const phone = req.body.phone || req.body.mobile || "";
+        const house_number = req.body.houseNumber || req.body.house_number || req.body.house || "";
+        const full_address = req.body.fullAddress || req.body.full_address || req.body.address || "";
+        const pincode = req.body.pincode || req.body.pin_code || req.body.zip || "";
+        const payment = req.body.payment || "COD";
+        const items = req.body.items || [];
+        const date = req.body.date || new Date().toISOString();
+
         let calculatedTotal = 0;
-        
-        // Smart Logic: Backend khud se photo aur naam product table se uthayega
         for (let item of items) {
             const { data: p } = await supabase.from('products').select('*').eq('id', item.id).single();
             if (p) {
                 if (p.stock < item.qty) return res.status(400).json({ error: `Insufficient stock` });
                 calculatedTotal += (p.price * item.qty);
                 await supabase.from('products').update({ stock: p.stock - item.qty }).eq('id', item.id);
-                // Order detail mein missing data daal rahe hain
                 item.name = p.name || p.title || "Product";
                 item.price = p.price;
-                item.image = p.image || p.images || p.photo || "";
+                item.image = p.image || (p.images && p.images.length ? p.images[0] : null) || p.photo || "";
             }
         }
         
@@ -111,7 +127,7 @@ app.post('/api/orders', authenticate, async (req, res) => {
         const orderId = "#BM" + Math.floor(10000 + Math.random() * 90000);
         
         const { error } = await supabase.from('orders').insert([{
-            id: orderId, customer_username: req.user.username, phone, house_number: houseNumber, full_address: fullAddress, pincode, address, items, amount: finalAmount, payment, date
+            id: orderId, customer_username: req.user.username, phone, house_number, full_address, pincode, address: full_address, items, amount: finalAmount, payment, date
         }]);
         if (error) return res.status(400).json({ error: error.message });
         res.json({ success: true, orderId });
@@ -120,9 +136,40 @@ app.post('/api/orders', authenticate, async (req, res) => {
 
 app.get('/api/orders/my', authenticate, async (req, res) => {
     try {
-        const { data, error } = await supabase.from('orders').select('*').eq('customer_username', req.user.username).order('created_at', { ascending: false });
+        const { data: orders, error } = await supabase.from('orders').select('*').eq('customer_username', req.user.username).order('created_at', { ascending: false });
         if (error) return res.status(400).json({ error: error.message });
-        res.json(data || []);
+        
+        const { data: products } = await supabase.from('products').select('id, image, images, photo, name, title');
+        const pMap = {};
+        if (products) products.forEach(p => pMap[p.id] = { img: p.image || (p.images ? p.images[0] : null) || p.photo || "", name: p.name || p.title || "Product" });
+        
+        const enrichedOrders = (orders || []).map(o => {
+            if (o.items) o.items = o.items.map(i => ({ ...i, image: i.image || (pMap[i.id] ? pMap[i.id].img : ""), name: i.name || (pMap[i.id] ? pMap[i.id].name : "Product") }));
+            return o;
+        });
+        res.json(enrichedOrders);
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.patch('/api/orders/:id/cancel', authenticate, async (req, res) => {
+    try {
+        const { cancel_reason } = req.body;
+        const { error } = await supabase.from('orders').update({ status: 'Cancelled', cancel_reason }).eq('id', req.params.id).eq('customer_username', req.user.username);
+        if (error) return res.status(400).json({ error: error.message });
+        res.json({ success: true });
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/api/products/:id/reviews', authenticate, async (req, res) => {
+    try {
+        const { rating, text, images, image } = req.body;
+        const { data: p, error: selErr } = await supabase.from('products').select('reviews_data').eq('id', req.params.id).single();
+        if (selErr) return res.status(400).json({ error: selErr.message });
+        const newReview = { user: req.user.username, rating, text, images, image, date: new Date().toISOString() };
+        const reviews = p.reviews_data ? [...p.reviews_data, newReview] : [newReview];
+        const { error } = await supabase.from('products').update({ reviews_data: reviews }).eq('id', req.params.id);
+        if (error) return res.status(400).json({ error: error.message });
+        res.json({ success: true });
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
@@ -152,13 +199,21 @@ app.get('/api/admin/products', authenticate, requireAdmin, async (req, res) => {
 
 app.get('/api/admin/orders', authenticate, requireAdmin, async (req, res) => {
     try {
-        const { data, error } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
+        const { data: orders, error } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
         if (error) return res.status(400).json({ error: error.message });
-        res.json(data || []);
+        
+        const { data: products } = await supabase.from('products').select('id, image, images, photo, name, title');
+        const pMap = {};
+        if (products) products.forEach(p => pMap[p.id] = { img: p.image || (p.images ? p.images[0] : null) || p.photo || "", name: p.name || p.title || "Product" });
+        
+        const enrichedOrders = (orders || []).map(o => {
+            if (o.items) o.items = o.items.map(i => ({ ...i, image: i.image || (pMap[i.id] ? pMap[i.id].img : ""), name: i.name || (pMap[i.id] ? pMap[i.id].name : "Product") }));
+            return o;
+        });
+        res.json(enrichedOrders);
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// Missing Route jo 'Request Failed' ka kaaran tha
 app.get('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
     try {
         const { data, error } = await supabase.from('users').select('*');

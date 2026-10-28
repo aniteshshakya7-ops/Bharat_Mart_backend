@@ -54,7 +54,6 @@ app.post('/api/auth/login', async (req, res) => {
     } catch (error) { res.status(500).json({ error: "Server Error: " + error.message }); }
 });
 
-// Yahan Admin Login Miss ho gaya tha, wo wapas add kar diya hai
 app.post('/api/auth/admin-login', async (req, res) => {
     try {
         const { username, password } = req.body;
@@ -97,7 +96,7 @@ app.put('/api/user/profile', authenticate, async (req, res) => {
 
 app.post('/api/orders', authenticate, async (req, res) => {
     try {
-        const { phone, houseNumber, fullAddress, pincode, address, payment, items, amount, date } = req.body;
+        const { phone, houseNumber, fullAddress, pincode, address, payment, items, date } = req.body;
         let calculatedTotal = 0;
         for (let item of items) {
             const { data: p } = await supabase.from('products').select('stock, price').eq('id', item.id).single();
@@ -105,9 +104,12 @@ app.post('/api/orders', authenticate, async (req, res) => {
             calculatedTotal += (p.price * item.qty);
             await supabase.from('products').update({ stock: p.stock - item.qty }).eq('id', item.id);
         }
+        
+        let finalAmount = req.body.amount || req.body.totalAmount || req.body.total || calculatedTotal;
+
         const orderId = "#BM" + Math.floor(10000 + Math.random() * 90000);
         const { error } = await supabase.from('orders').insert([{
-            id: orderId, customer_username: req.user.username, phone, house_number: houseNumber, full_address: fullAddress, pincode, address, items, amount, payment, date
+            id: orderId, customer_username: req.user.username, phone, house_number: houseNumber, full_address: fullAddress, pincode, address, items, amount: finalAmount, payment, date
         }]);
         if (error) return res.status(400).json({ error: error.message });
         res.json({ success: true, orderId });
@@ -145,6 +147,14 @@ app.post('/api/products/:id/reviews', authenticate, async (req, res) => {
 });
 
 // --- ADMIN ROUTES ---
+app.get('/api/admin/products', authenticate, requireAdmin, async (req, res) => {
+    try {
+        const { data, error } = await supabase.from('products').select('*').order('created_at', { ascending: false });
+        if (error) return res.status(400).json({ error: error.message });
+        res.json(data || []);
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
 app.get('/api/admin/orders', authenticate, requireAdmin, async (req, res) => {
     try {
         const { data, error } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
@@ -161,7 +171,6 @@ app.patch('/api/admin/orders/:id/status', authenticate, requireAdmin, async (req
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// Naya SKU wala Product code ek hi baar lagaya gaya hai
 app.post('/api/admin/products', authenticate, requireAdmin, async (req, res) => {
     try {
         if (!req.body.sku) {

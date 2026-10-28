@@ -101,7 +101,6 @@ app.put('/api/user/profile', authenticate, async (req, res) => {
 
 app.post('/api/orders', authenticate, async (req, res) => {
     try {
-        // Smart mapping for all possible frontend names
         const phone = req.body.phone || req.body.mobile || "";
         const house_number = req.body.houseNumber || req.body.house_number || req.body.house || "";
         const full_address = req.body.fullAddress || req.body.full_address || req.body.address || "";
@@ -119,7 +118,9 @@ app.post('/api/orders', authenticate, async (req, res) => {
                 await supabase.from('products').update({ stock: p.stock - item.qty }).eq('id', item.id);
                 item.name = p.name || p.title || "Product";
                 item.price = p.price;
-                item.image = p.image || (p.images && p.images.length ? p.images[0] : null) || p.photo || "";
+                let finalImg = p.image || (p.images && p.images.length ? p.images[0] : null) || p.photo || "";
+                item.image = finalImg;
+                item.photo = finalImg;
             }
         }
         
@@ -144,7 +145,16 @@ app.get('/api/orders/my', authenticate, async (req, res) => {
         if (products) products.forEach(p => pMap[p.id] = { img: p.image || (p.images ? p.images[0] : null) || p.photo || "", name: p.name || p.title || "Product" });
         
         const enrichedOrders = (orders || []).map(o => {
-            if (o.items) o.items = o.items.map(i => ({ ...i, image: i.image || (pMap[i.id] ? pMap[i.id].img : ""), name: i.name || (pMap[i.id] ? pMap[i.id].name : "Product") }));
+            o.houseNumber = o.house_number || o.houseNumber || "";
+            o.fullAddress = o.full_address || o.address || o.fullAddress || "";
+            o.pincode = o.pincode || o.pin_code || "";
+            
+            let itemsArr = typeof o.items === 'string' ? JSON.parse(o.items) : (o.items || []);
+            o.items = itemsArr.map(i => {
+                let pData = pMap[i.id] || { img: "", name: "Product" };
+                let fImg = i.photo || i.image || pData.img;
+                return { ...i, image: fImg, photo: fImg, name: i.name || pData.name };
+            });
             return o;
         });
         res.json(enrichedOrders);
@@ -207,7 +217,16 @@ app.get('/api/admin/orders', authenticate, requireAdmin, async (req, res) => {
         if (products) products.forEach(p => pMap[p.id] = { img: p.image || (p.images ? p.images[0] : null) || p.photo || "", name: p.name || p.title || "Product" });
         
         const enrichedOrders = (orders || []).map(o => {
-            if (o.items) o.items = o.items.map(i => ({ ...i, image: i.image || (pMap[i.id] ? pMap[i.id].img : ""), name: i.name || (pMap[i.id] ? pMap[i.id].name : "Product") }));
+            o.houseNumber = o.house_number || o.houseNumber || "";
+            o.fullAddress = o.full_address || o.address || o.fullAddress || "";
+            o.pincode = o.pincode || o.pin_code || "";
+            
+            let itemsArr = typeof o.items === 'string' ? JSON.parse(o.items) : (o.items || []);
+            o.items = itemsArr.map(i => {
+                let pData = pMap[i.id] || { img: "", name: "Product" };
+                let fImg = i.photo || i.image || pData.img;
+                return { ...i, image: fImg, photo: fImg, name: i.name || pData.name };
+            });
             return o;
         });
         res.json(enrichedOrders);

@@ -54,15 +54,16 @@ app.post('/api/auth/login', async (req, res) => {
     } catch (error) { res.status(500).json({ error: "Server Error: " + error.message }); }
 });
 
-app.post('/api/auth/admin-login', async (req, res) => {
+app.post('/api/admin/products', authenticate, requireAdmin, async (req, res) => {
     try {
-        const { username, password } = req.body;
-        const { data: admin, error } = await supabase.from('users').select('*').eq('username', username).eq('role', 'admin').single();
-        if (error && error.code !== 'PGRST116') return res.status(400).json({ error: "DB Error: " + error.message });
-        if (!admin || admin.password !== password) return res.status(401).json({ error: "Invalid Admin Credentials" });
-        const token = jwt.sign({ id: admin.id, username: admin.username, role: admin.role }, JWT_SECRET, { expiresIn: '1d' });
-        res.json({ token });
-    } catch (error) { res.status(500).json({ error: "Server Error: " + error.message }); }
+        // Naya code jo automatically SKU bana dega
+        if (!req.body.sku) {
+            req.body.sku = "PRD-" + Date.now();
+        }
+        const { data, error } = await supabase.from('products').insert([req.body]).select();
+        if (error) return res.status(400).json({ error: error.message });
+        res.json(data[0]);
+    } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 // --- PUBLIC STORE ROUTES ---

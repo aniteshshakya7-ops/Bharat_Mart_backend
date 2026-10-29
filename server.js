@@ -61,11 +61,32 @@ app.post('/api/auth/admin-login', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// --- COUPON ROUTE ---
+// --- SMART COUPON ROUTE ---
 const verifyCoupon = async (req, res) => {
-    const code = req.body.code || req.body.couponCode || req.body.coupon;
-    if (code && code.toUpperCase() === 'WELCOME50') return res.json({ success: true, discount: 50, type: 'fixed' });
-    res.status(400).json({ error: "Invalid Coupon Code" });
+    try {
+        const code = (req.body.code || req.body.couponCode || req.body.coupon || "").toUpperCase();
+        if (!code) return res.status(400).json({ error: "Please enter a coupon code" });
+
+        // Database se Admin wale coupons check karna
+        const { data, error } = await supabase.from('store_settings').select('value').eq('key', 'coupons').single();
+        
+        let validCoupon = null;
+        if (data && data.value && Array.isArray(data.value)) {
+            validCoupon = data.value.find(c => c.code.toUpperCase() === code);
+        }
+
+        if (validCoupon) {
+            // Agar Admin ne coupon banaya hai, toh usko pass karo
+            return res.json({ success: true, discount: validCoupon.discount, type: 'percent' });
+        }
+
+        // Default purana backup coupon
+        if (code === 'WELCOME50') return res.json({ success: true, discount: 50, type: 'fixed' });
+
+        res.status(400).json({ error: "Invalid Coupon Code" });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
 };
 app.post('/api/verify-coupon', verifyCoupon);
 app.post('/api/coupons/verify', verifyCoupon);
@@ -121,7 +142,7 @@ app.post('/api/orders', authenticate, async (req, res) => {
                 let finalImg = p.image || (p.images && p.images.length ? p.images[0] : null) || p.photo || "";
                 item.image = finalImg;
                 item.photo = finalImg;
-                item.img = finalImg; // Super Mapper
+                item.img = finalImg;
             }
         }
         
@@ -149,7 +170,6 @@ app.get('/api/orders/my', authenticate, async (req, res) => {
             o.houseNumber = o.house_number || o.houseNumber || "";
             o.fullAddress = o.full_address || o.address || o.fullAddress || "";
             
-            // Super Mapper for Pincode
             const pin = o.pincode || o.pin_code || o.pinCode || "";
             o.pincode = pin;
             o.pinCode = pin;
@@ -159,8 +179,6 @@ app.get('/api/orders/my', authenticate, async (req, res) => {
             o.items = itemsArr.map(i => {
                 let pData = pMap[i.id] || { img: "", name: "Product" };
                 let fImg = i.photo || i.image || i.img || pData.img;
-                
-                // Super Mapper for Photo
                 return { ...i, image: fImg, photo: fImg, img: fImg, imageUrl: fImg, name: i.name || pData.name };
             });
             return o;
@@ -228,7 +246,6 @@ app.get('/api/admin/orders', authenticate, requireAdmin, async (req, res) => {
             o.houseNumber = o.house_number || o.houseNumber || "";
             o.fullAddress = o.full_address || o.address || o.fullAddress || "";
             
-            // Super Mapper for Pincode
             const pin = o.pincode || o.pin_code || o.pinCode || "";
             o.pincode = pin;
             o.pinCode = pin;
@@ -238,8 +255,6 @@ app.get('/api/admin/orders', authenticate, requireAdmin, async (req, res) => {
             o.items = itemsArr.map(i => {
                 let pData = pMap[i.id] || { img: "", name: "Product" };
                 let fImg = i.photo || i.image || i.img || pData.img;
-                
-                // Super Mapper for Photo
                 return { ...i, image: fImg, photo: fImg, img: fImg, imageUrl: fImg, name: i.name || pData.name };
             });
             return o;

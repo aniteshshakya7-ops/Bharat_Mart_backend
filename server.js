@@ -11,7 +11,13 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' })); 
 
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_KEY;
+// Render ki key problem fix karne ke liye dono options support kiye hain
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY;
+
+if (!supabaseUrl || !supabaseKey) {
+    console.error("Missing Supabase Keys. Check Environment Variables!");
+}
+
 const supabase = createClient(supabaseUrl, supabaseKey);
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecretbharatmart123';
 
@@ -93,7 +99,7 @@ app.get('/api/settings', async (req, res) => {
 // ----------------- REVIEWS -----------------
 app.post('/api/products/:id/reviews', authenticate, async (req, res) => {
   const { rating, text, images } = req.body;
-  const { data: prod } = await supabase.from('products').select('reviews_data').eq('id', req.params.id).single();
+  const { data: prod } = await supabase.from('products').select('reviews_data').eq('id', req.params.id).maybeSingle();
   
   const existingReviews = prod?.reviews_data || [];
   const newReview = { user: req.user.username, rating: Number(rating), text, images: images || [], date: new Date().toLocaleDateString('en-IN') };
@@ -113,7 +119,7 @@ app.post('/api/products/:id/reviews', authenticate, async (req, res) => {
 // ----------------- COUPONS -----------------
 app.post('/api/coupons/verify', async (req, res) => {
   const { code } = req.body;
-  const { data } = await supabase.from('store_settings').select('value').eq('key', 'coupons').single();
+  const { data } = await supabase.from('store_settings').select('value').eq('key', 'coupons').maybeSingle();
   const couponsList = (data && data.value) ? data.value : [];
   const found = couponsList.find(c => c.code.toUpperCase() === code.toUpperCase());
   if (found) res.json({ discount: found.discount, type: 'percentage' });
@@ -126,22 +132,22 @@ app.post('/api/orders', authenticate, async (req, res) => {
   const finalAddress = fullAddress || address;
   let subtotal = 0;
   
-  // Checking stock for specific sizes/colors
+  // Checking stock
   for (const item of items) {
-    const { data: prod } = await supabase.from('products').select('price, stock').eq('id', item.id).single();
+    const { data: prod } = await supabase.from('products').select('price, stock').eq('id', item.id).maybeSingle();
     if (!prod || prod.stock < item.qty) return res.status(400).json({ error: `Not enough stock for ${item.name}` });
     subtotal += prod.price * item.qty;
   }
 
   let discount = 0;
   if (couponCode) {
-    const { data: cData } = await supabase.from('store_settings').select('value').eq('key', 'coupons').single();
+    const { data: cData } = await supabase.from('store_settings').select('value').eq('key', 'coupons').maybeSingle();
     const cList = cData ? cData.value : [];
     const found = cList.find(c => c.code.toUpperCase() === couponCode.toUpperCase());
     if (found) discount = Math.round(subtotal * found.discount / 100);
   }
 
-  const { data: payData } = await supabase.from('store_settings').select('value').eq('key', 'payment').single();
+  const { data: payData } = await supabase.from('store_settings').select('value').eq('key', 'payment').maybeSingle();
   const paySet = payData ? payData.value : { codCharge: 49, upiCashback: 0 };
   let shipping = (subtotal === 0 || subtotal >= 499) ? 0 : 49;
   let extra = payment === 'COD' ? Number(paySet.codCharge) : (payment === 'UPI' ? -Number(paySet.upiCashback) : 0);
@@ -222,9 +228,13 @@ app.get('/api/admin/settings', authenticate, requireAdmin, async (req, res) => {
   res.json(settings);
 });
 
+// FIXED: Admin settings update (Unique Constraint error fixed here)
 app.put('/api/admin/settings', authenticate, requireAdmin, async (req, res) => {
   const { key, value } = req.body;
-  const { data: existing } = await supabase.from('store_settings').select('id').eq('key', key).single();
+  
+  // Checking existing setting by 'key' using maybeSingle() to avoid crashes
+  const { data: existing } = await supabase.from('store_settings').select('key').eq('key', key).maybeSingle();
+  
   let error;
   if (existing) {
     const resUpdate = await supabase.from('store_settings').update({ value }).eq('key', key);
@@ -233,6 +243,7 @@ app.put('/api/admin/settings', authenticate, requireAdmin, async (req, res) => {
     const resInsert = await supabase.from('store_settings').insert([{ key, value }]);
     error = resInsert.error;
   }
+  
   if (error) return res.status(500).json({ error: error.message });
   res.json({ success: true });
 });
